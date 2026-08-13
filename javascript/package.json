@@ -1,0 +1,19 @@
+{
+  "name": "mini-hack-cohort3-session4-starter-js",
+  "version": "1.0.0",
+  "description": "Cohort 3 Session 4 starter (JavaScript): the Smart Wallet Advisor, on-chain data methods, and the multi-provider model layer",
+  "type": "module",
+  "scripts": {
+    "direct-rpc": "node direct-rpc.js",
+    "fetch-transactions": "node chainkit-fetch.js",
+    "mcp-agent": "node chainkit-mcp-agent.js",
+    "advisor": "node advisor.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0",
+    "@avalanche-sdk/chainkit": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.0"
+  }
+}

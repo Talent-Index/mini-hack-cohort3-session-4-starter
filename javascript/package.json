@@ -7,13 +7,20 @@
     "direct-rpc": "node direct-rpc.js",
     "fetch-transactions": "node chainkit-fetch.js",
     "mcp-agent": "node chainkit-mcp-agent.js",
-    "advisor": "node advisor.js"
+    "mcp-server": "node mcp-server.js",
+    "advisor": "node advisor.js",
+    "postinstall": "patch-package"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.0",
-    "@avalanche-sdk/chainkit": "^1.0.0",
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@avalanche-sdk/chainkit": "^0.3.13",
+    "@google/genai": "^2.17.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "dotenv": "^16.4.5",
-    "ethers": "^6.13.0"
+    "ethers": "^6.13.0",
+    "openai": "^7.4.0"
+  },
+  "devDependencies": {
+    "patch-package": "^8.0.1"
   }
 }

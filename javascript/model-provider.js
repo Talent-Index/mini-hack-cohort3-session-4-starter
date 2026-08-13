@@ -19,15 +19,16 @@
 //   stopReason — the provider's own reason string, kept as-is, not normalized
 //   raw        — the full untouched response, in case you need provider-specific detail
 //
-// TOOL-CALLING SUPPORT — READ THIS BEFORE SESSION 2
-// Only the Anthropic client below implements tools. OpenAI, Gemini, and
-// Ollama clients accept a `tools` argument without erroring, but ignore it
-// and always return toolCalls: []. Each provider's function-calling API
-// shape is different enough (Anthropic's content blocks vs. OpenAI's
-// tool_calls array vs. Gemini's functionCall parts) that fully normalizing
-// all four is real work, not a quick add. If your Week 1 agent needs
-// tools — and it does, that's the deliverable — build it on "anthropic"
-// until the others catch up.
+// TOOL-CALLING SUPPORT
+// The Anthropic and OpenAI clients below both implement tools; Gemini and
+// Ollama still accept a `tools` argument without erroring but ignore it and
+// always return toolCalls: []. Each provider's function-calling API shape is
+// different (Anthropic's content blocks vs. OpenAI's tool_calls array vs.
+// Gemini's functionCall parts), so each client normalizes into the same
+// { text, toolCalls, stopReason, raw } contract. Critically, both tool-capable
+// clients return raw.content as Anthropic-style content blocks (text + tool_use)
+// so chainkit-mcp-agent.js can thread the assistant turn back in the same way
+// regardless of which provider produced it — the agent stays provider-agnostic.
 
 const SUPPORTED_PROVIDERS = ["anthropic", "openai", "gemini", "ollama"];
 
@@ -124,6 +125,88 @@ async function createAnthropicClient() {
   };
 }
 
+// The agent threads assistant turns back in as Anthropic-style content blocks
+// (that's what raw.content is), so before calling OpenAI we translate those
+// blocks into OpenAI's chat-message shape: tool_use → an assistant message with
+// a tool_calls array, and tool_result → a separate { role: "tool" } message.
+// Plain string-content messages (advisor.js, chat.js) pass straight through.
+function toOpenAIMessages(messages) {
+  const out = [];
+  for (const msg of messages) {
+    const { role, content } = msg;
+
+    if (typeof content === "string") {
+      out.push({ role, content });
+      continue;
+    }
+
+    if (role === "assistant" && Array.isArray(content)) {
+      const text = content
+        .filter((b) => b.type === "text")
+        .map((b) => b.text)
+        .join("\n");
+      const toolCalls = content
+        .filter((b) => b.type === "tool_use")
+        .map((b) => ({
+          id: b.id,
+          type: "function",
+          function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
+        }));
+      const assistant = { role: "assistant", content: text || null };
+      if (toolCalls.length > 0) assistant.tool_calls = toolCalls;
+      out.push(assistant);
+      continue;
+    }
+
+    if (Array.isArray(content)) {
+      // A user turn carrying tool_result blocks — each becomes its own
+      // { role: "tool" } message keyed by the id OpenAI handed us.
+      for (const block of content) {
+        if (block.type === "tool_result") {
+          out.push({
+            role: "tool",
+            tool_call_id: block.tool_use_id,
+            content:
+              typeof block.content === "string"
+                ? block.content
+                : JSON.stringify(block.content),
+          });
+        } else if (block.type === "text") {
+          out.push({ role, content: block.text });
+        }
+      }
+      continue;
+    }
+
+    out.push({ role, content: extractText(content) });
+  }
+  return out;
+}
+
+// MCP tools arrive as { name, description, inputSchema }; OpenAI wants each
+// wrapped as a function tool with the JSON Schema under `parameters`.
+function toOpenAITools(tools) {
+  if (!tools || tools.length === 0) return undefined;
+  return tools.map((tool) => ({
+    type: "function",
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.inputSchema ??
+        tool.input_schema ?? { type: "object", properties: {} },
+    },
+  }));
+}
+
+function safeJsonParse(raw) {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
 async function createOpenAIClient() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -135,20 +218,51 @@ async function createOpenAIClient() {
 
   return {
     provider: "openai",
-    async generateText({ systemPrompt, messages }) {
-      // Tool calling not yet implemented for this provider — see the note
-      // at the top of this file. Plain text chat only, for now.
+    async generateText({ systemPrompt, messages, tools }) {
       const response = await client.chat.completions.create({
         model: process.env.OPENAI_MODEL || "gpt-4.1",
         max_tokens: Number(process.env.MAX_TOKENS || 1024),
-        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...toOpenAIMessages(messages),
+        ],
+        tools: toOpenAITools(tools),
       });
 
+      const message = response.choices?.[0]?.message ?? {};
+      const finishReason = response.choices?.[0]?.finish_reason ?? "unknown";
+
+      const toolCalls = (message.tool_calls ?? [])
+        .filter((call) => call.type === "function")
+        .map((call) => ({
+          id: call.id,
+          name: call.function.name,
+          input: safeJsonParse(call.function.arguments),
+        }));
+
+      // Rebuild the assistant turn as Anthropic-style content blocks so the
+      // agent can push raw.content back into the message list uniformly — the
+      // same shape the Anthropic client returns.
+      const contentBlocks = [];
+      if (message.content) {
+        contentBlocks.push({ type: "text", text: message.content });
+      }
+      for (const call of toolCalls) {
+        contentBlocks.push({
+          type: "tool_use",
+          id: call.id,
+          name: call.name,
+          input: call.input,
+        });
+      }
+
       return {
-        text: normalizeResponse(response),
-        toolCalls: [],
-        stopReason: response.choices?.[0]?.finish_reason ?? "unknown",
-        raw: response,
+        text: message.content ?? "",
+        toolCalls,
+        // Map OpenAI's "tool_calls" finish reason onto the "tool_use" sentinel
+        // the agent loop checks for; pass every other reason through unchanged.
+        stopReason: finishReason === "tool_calls" ? "tool_use" : finishReason,
+        raw: { ...response, content: contentBlocks },
       };
     },
   };

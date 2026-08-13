@@ -1,0 +1,13 @@
+diff --git a/node_modules/@avalanche-sdk/chainkit/bin/mcp-server.js b/node_modules/@avalanche-sdk/chainkit/bin/mcp-server.js
+index 2038864..aa1465a 100755
+--- a/node_modules/@avalanche-sdk/chainkit/bin/mcp-server.js
++++ b/node_modules/@avalanche-sdk/chainkit/bin/mcp-server.js
+@@ -58832,7 +58832,7 @@ var init_server = __esm(() => {
+       if (isZ4Schema(methodSchema)) {
+         const v4Schema = methodSchema;
+         const v4Def = v4Schema._zod?.def;
+-        methodValue = v4Def?.value ?? v4Schema.value;
++        methodValue = v4Def?.value ?? v4Def?.values?.[0] ?? v4Schema.value;
+       } else {
+         const v3Schema = methodSchema;
+         const legacyDef = v3Schema._def;

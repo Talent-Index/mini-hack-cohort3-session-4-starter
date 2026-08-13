@@ -9,7 +9,9 @@ pattern from Sessions 1 and 2.
 ```bash
 npm install
 cp .env.example .env
-# fill in ANTHROPIC_API_KEY, GLACIER_API_KEY, WALLET_ADDRESS at minimum
+# fill in GLACIER_API_KEY and WALLET_ADDRESS, plus the API key for whichever
+# MODEL_PROVIDER you use (ANTHROPIC_API_KEY by default, or OPENAI_API_KEY /
+# GEMINI_API_KEY — Ollama needs no key). See "Model provider" below.
 ```
 
 ## Files
@@ -20,6 +22,7 @@ cp .env.example .env
 | `direct-rpc.js` | Method 1: raw RPC via `ethers.js`, `getBalance`/`getBlock`/`getTransactionCount` |
 | `chainkit-fetch.js` | Method 2: structured wallet history via the real `@avalanche-sdk/chainkit` SDK |
 | `chainkit-mcp-agent.js` | ChainKit running as an MCP server, wired into a tool-calling agent |
+| `mcp-server.js` | Launcher for the ChainKit MCP server — loads `.env` and passes `GLACIER_API_KEY` through; run via `npm run mcp-server` |
 | `advisor.js` | Session 4: the Smart Wallet Advisor, fetch, normalize, summarize, with a human-in-the-loop checkpoint and audit logging |
 | `normalize.js` | Shared wei-to-AVAX, hex-to-decimal, Unix-to-ISO8601 conversion, used by all data methods |
 
@@ -36,19 +39,29 @@ For `mcp-agent`, start the ChainKit MCP server in another terminal
 first:
 
 ```bash
-npx -y @avalanche-sdk/chainkit mcp-server
+npm run mcp-server   # runs chainkit `mcp start --transport sse --port 2718`
 ```
 
-It prints the local URL it's running on. Put that in `CHAINKIT_MCP_URL`
-in your `.env` before running the agent.
+It serves the SSE stream at `http://localhost:2718/sse`. Put that in
+`CHAINKIT_MCP_URL` in your `.env` before running the agent:
+
+```
+CHAINKIT_MCP_URL=http://localhost:2718/sse
+```
+
+> **Note:** `@avalanche-sdk/chainkit@0.3.13`'s bundled MCP server ships with a
+> bug that crashes it on startup (`Schema method literal must be a string` — its
+> zod-v4 literal reader checks `def.value` instead of `def.values[0]`). This repo
+> ships a one-line fix in `patches/` that `patch-package` applies automatically on
+> `npm install` (via the `postinstall` script), so `npm run mcp-server` just works.
 
 ## Model provider
 
 Same as Session 2: `MODEL_PROVIDER` in `.env` picks the provider
 (`anthropic`, `openai`, `gemini`, or `ollama`), defaulting to
-`anthropic` if unset. Only the Anthropic path implements tool calling,
-required for `chainkit-mcp-agent.js` to work at all, the other three are
-plain text chat.
+`anthropic` if unset. The **Anthropic** and **OpenAI** paths both implement
+tool calling (required for `chainkit-mcp-agent.js`); **Gemini** and **Ollama**
+are still plain text chat only.
 
 ## Submission
 

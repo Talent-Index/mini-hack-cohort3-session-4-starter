@@ -8,28 +8,30 @@
 // agent makes along the way.
 
 import "dotenv/config";
-import { AvalancheSDK } from "@avalanche-sdk/chainkit";
+import { Avalanche } from "@avalanche-sdk/chainkit";
 import { normalizeMany } from "./normalize.js";
 import { createModelClient } from "./model-provider.js";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
-const avalancheSDK = new AvalancheSDK({ apiKey: process.env.GLACIER_API_KEY });
+const avalancheSDK = new Avalanche({ apiKey: process.env.GLACIER_API_KEY });
 const rl = readline.createInterface({ input, output });
 
-// ChainKit's NativeTransaction shape doesn't match normalize.js's expected
-// fields (txHash vs hash, blockTimestamp vs timestamp, txStatus as a string
-// vs status as 0/1, and from/to as nested { address } objects vs flat
-// strings). Map into the canonical shape here, at the fetch layer, rather
-// than teaching normalize.js multiple raw shapes.
-function mapChainkitTx(tx) {
+// ChainKit's list returns a wrapper per item — { nativeTransaction, erc20Transfers }
+// — not a flat transaction, and the NativeTransaction shape inside doesn't match
+// normalize.js's expected fields (txHash vs hash, blockTimestamp vs timestamp,
+// txStatus as the string "1"/"0" vs status as 0/1, and from/to as nested
+// { address } objects vs flat strings). Unwrap and map into the canonical shape
+// here, at the fetch layer, rather than teaching normalize.js multiple raw shapes.
+function mapChainkitTx(item) {
+  const tx = item.nativeTransaction ?? item;
   return {
     hash: tx.txHash,
     value: tx.value,
     from: tx.from?.address,
     to: tx.to?.address,
     timestamp: tx.blockTimestamp,
-    status: tx.txStatus === "success" ? 1 : 0,
+    status: tx.txStatus === "1" ? 1 : 0,
   };
 }
 
@@ -37,13 +39,14 @@ function mapChainkitTx(tx) {
 // more history (50 transactions instead of 10) since a meaningful
 // summary needs more than a handful of data points to work with.
 async function getWalletHistory(walletAddress) {
-  const { transactions } = await avalancheSDK.data.evm.transactions.listTransactions({
+  const result = await avalancheSDK.data.evm.address.transactions.list({
     chainId: "43113", // Fuji testnet
     address: walletAddress,
     pageSize: 50,
   });
   // Step 2: normalize. Same normalize.js from Session 3, unchanged,
   // this is the whole point of having built it once, reusable everywhere.
+  const transactions = result?.result?.transactions ?? result?.items ?? [];
   return normalizeMany(transactions.map(mapChainkitTx));
 }
 
@@ -91,7 +94,8 @@ function logDecision({ reasoning, tool, params, result }) {
 
 async function main() {
   const walletAddress = process.argv[2];
-  if (!walletAddress) throw new Error("Usage: node advisor.js <wallet-address>");
+  if (!walletAddress)
+    throw new Error("Usage: node advisor.js <wallet-address>");
 
   // Steps 1 and 2: fetch and normalize.
   const normalizedTxs = await getWalletHistory(walletAddress);
@@ -118,7 +122,7 @@ async function main() {
   if (largeTx) {
     const approved = await confirmAction(
       `This wallet sent ${largeTx.amount} AVAX to ${largeTx.to}, unusually large for this pattern.`,
-      "Flag transaction for manual review"
+      "Flag transaction for manual review",
     );
     logDecision({
       reasoning: "Large transaction detected",

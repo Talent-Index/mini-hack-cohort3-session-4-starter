@@ -1,9 +1,15 @@
 // ChainKit as an MCP server, wired into an agent
 //
 // Before running this, start the ChainKit MCP server in another terminal:
-//   npx -y @avalanche-sdk/chainkit mcp-server
-// It will print the local URL it's running on, e.g. http://localhost:PORT/mcp
-// Put that URL in CHAINKIT_MCP_URL in your .env.
+//   npm run mcp-server
+//   (which runs: chainkit `mcp start --transport sse --port 2718`)
+// The SSE transport's stream endpoint is at /sse, so set:
+//   CHAINKIT_MCP_URL=http://localhost:2718/sse   (in your .env)
+//
+// NOTE: @avalanche-sdk/chainkit@0.3.13's bundled MCP server ships a bug that
+// crashes it on startup ("Schema method literal must be a string" — its zod-v4
+// literal reader looks at def.value instead of def.values[0]). This repo patches
+// it via patch-package (see patches/), applied automatically on npm install.
 //
 // This agent then asks a plain-English question, the model decides to
 // call a ChainKit tool, and the tool call is forwarded straight to the
@@ -13,7 +19,7 @@ import "dotenv/config";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { createModelClient } from "./model-provider.js";
 
 const SYSTEM_PROMPT = "You are Mini Hack Assistant. Use tools when they genuinely help; otherwise answer directly.";
@@ -23,7 +29,10 @@ async function connectChainkitMcp() {
   if (!url) throw new Error("Set CHAINKIT_MCP_URL in your .env first, from the running mcp-server output.");
 
   const mcpClient = new Client({ name: "mini-hack-agent", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(new URL(url));
+  // ChainKit's `mcp start --transport sse` serves the legacy MCP SSE transport
+  // (GET /sse to open the stream, POST /message to send), not Streamable HTTP —
+  // so connect with the matching SSE client transport.
+  const transport = new SSEClientTransport(new URL(url));
   await mcpClient.connect(transport);
   return mcpClient;
 }
@@ -68,6 +77,9 @@ async function main() {
   }
 
   rl.close();
+  // Close the MCP client too — its SSE stream is a live connection that would
+  // otherwise keep the event loop (and this process) alive after "exit".
+  await mcpClient.close();
 }
 
 main().catch((err) => {

@@ -117,9 +117,10 @@ async function main() {
   // Human-in-the-loop: anything 5 AVAX or larger gets flagged and needs
   // explicit approval before we log it as reviewed. Nothing here
   // executes a transaction, this is intentionally the simplest possible
-  // HITL pattern, show reasoning, wait for a yes or no.
-  const largeTx = normalizedTxs.find((t) => t.amount >= 5);
-  if (largeTx) {
+  // HITL pattern, show reasoning, wait for a yes or no. Every qualifying
+  // transaction gets its own checkpoint, not just the first one found.
+  const largeTxs = normalizedTxs.filter((t) => t.amount >= 5);
+  for (const largeTx of largeTxs) {
     const approved = await confirmAction(
       `This wallet sent ${largeTx.amount} AVAX to ${largeTx.to}, unusually large for this pattern.`,
       "Flag transaction for manual review",

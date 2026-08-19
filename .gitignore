@@ -1,0 +1,7 @@
+.env
+node_modules/
+*.log
+
+# Local session-discipline / knowledge-capture files — never merged back
+# into submissions or PRs to the instructor.
+tasks/
